@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>高雄市道路流量／車速 動態視覺化 · 強化 v3</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <style>
+    :root {
+      --text:#111827; --muted:#6b7280; --border:#e5e7eb; --bg:#ffffff;
+      --chip:#111827; --chipText:#ffffff;
+      --accent:#38bdf8;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,"Noto Sans","Apple Color Emoji","Segoe UI Emoji";color:var(--text);background:var(--bg)}
+    header{display:flex;gap:.75rem;align-items:center;padding:.75rem 1rem;border-bottom:1px solid var(--border)}
+    header .title{font-weight:600;font-size:1.1rem}
+    .spacer{flex:1}
+    .btn,.chip,select,input[type="file"]::file-selector-button{appearance:none;border:1px solid var(--border);background:#fff;color:var(--text);padding:.4rem .7rem;border-radius:.6rem;font-size:.9rem;cursor:pointer}
+    .btn:hover{background:#f9fafb}
+    .chip{border-radius:999px}
+    .chip.active{background:var(--chip);color:var(--chipText)}
+    .controls{display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:.75rem;padding:.75rem 1rem;border-bottom:1px solid var(--border);background:#f8fafc}
+    .field{display:flex;align-items:center;gap:.5rem}
+    .field label{font-size:.85rem;color:var(--muted)}
+    .field input[type="range"]{width:100%}
+    .page{display:grid;grid-template-columns:280px 1fr 280px;height:calc(100vh - 148px)}
+    .panel{border-right:1px solid var(--border);overflow:auto}
+    .panel.right{border-right:0;border-left:1px solid var(--border)}
+    .panel h3{font-size:.95rem;margin:.75rem 1rem .5rem;color:#0f172a}
+    .list{padding:0 .5rem .75rem}
+    .item{display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:.35rem .5rem;border-radius:.5rem}
+    .item:hover{background:#f1f5f9}
+    .badge{font-variant-numeric:tabular-nums;font-size:.85rem;color:#0f172a}
+    .road{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px;color:#334155}
+    .value{font-variant-numeric:tabular-nums;color:#111827}
+    .map-wrap{position:relative;width:100%;height:100%}
+    #map{width:100%;height:100%;position:relative}
+    #particle-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:650}
+    .hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+    .hint>div{background:rgba(255,255,255,.9);border:1px solid var(--border);border-radius:1rem;padding:1rem 1.25rem;text-align:center;max-width:640px}
+    .muted{color:var(--muted);font-size:.9rem}
+    .legend{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,.9);border:1px solid var(--border);border-radius:.5rem;padding:.35rem .6rem;font-size:.8rem;display:flex;align-items:center;gap:.5rem;z-index:700}
+    .grad{width:200px;height:10px;background:linear-gradient(90deg,#1d4ed8 0%,#ef4444 40%,#f59e0b 75%,#fde047 100%);border-radius:999px}
+    .legend .cap{font-variant-numeric:tabular-nums}
+    /* road labels */
+    .road-label{
+      background:rgba(255,255,255,.85);
+      border:1px solid var(--border);
+      border-radius:.35rem;
+      padding:.05rem .35rem;
+      font-size:.75rem;
+      color:#334155;
+      white-space:nowrap;
+      box-shadow:0 1px 2px rgba(0,0,0,.06);
+    }
+    .lm-tip{font-size:.8rem;background:#fff;border:1px solid var(--border);border-radius:.35rem;padding:.1rem .35rem;color:#111827}
+    /* hover info panel */
+    .hover-card{ font-size:.85rem; line-height:1.3; }
+    .hover-card .name{font-weight:600;margin-bottom:.15rem}
+    .hover-card table{border-collapse:collapse; font-variant-numeric:tabular-nums; width:100%}
+    .hover-card th,.hover-card td{border-top:1px solid #e5e7eb; padding:.15rem .25rem; text-align:left}
+    .hover-card th{color:#374151; font-weight:600}
+    .hover-card .dir{width:7ch}
+    /* major road style (legend chip) */
+    .legend-major{
+      position:absolute; bottom:10px; right:10px;
+      background:rgba(255,255,255,.9); border:1px solid var(--border);
+      border-radius:.5rem; padding:.35rem .6rem; font-size:.8rem; display:flex; align-items:center; gap:.5rem; z-index:700;
+    }
+    .major-chip{display:inline-flex;align-items:center;gap:.35rem}
+    .major-line{width:28px;height:0;border-top:3px solid #111827;border-bottom:3px solid transparent;border-radius:3px}
+    /* checkbox style */
+    .chk{display:flex; align-items:center; gap:.35rem; cursor:pointer}
+  
+/* --- Mobile layout for ~375x812 --- */
+@media (max-width: 480px) {
+  header { flex-wrap: wrap; gap: .5rem; }
+  header .title { width: 100%; font-size: 1rem; order: 0; }
+  #url-input { min-width: 0 !important; width: 100%; order: 10; }
+  #url-load-btn { order: 11; }
+  header .spacer { display: none; }
+  header #pause-btn { margin-left: auto; order: 12; }
+  header > div[style*="font-size:.8rem"] { order: 13; width: 100%; line-height: 1.2; }
+  .controls { grid-template-columns: 1fr 1fr; gap: .5rem; }
+  #period-chips { overflow-x: auto; white-space: nowrap; }
+  .page { grid-template-columns: 1fr; height: auto; }
+  .panel, .panel.right { display: none; }
+  .map-wrap { height: calc(var(--vh, 1vh) * 100 - 220px); }
+  .legend { transform: translateX(-50%) scale(.9); }
+  .legend-major { transform: scale(.9); transform-origin: bottom right; }
+  .fab { position: absolute; z-index: 750; bottom: 70px; left: 10px;
+         padding: .45rem .7rem; border: 1px solid var(--border);
+         background: #fff; border-radius: .6rem; font-size: .9rem; }
+  .fab.right { left: auto; right: 10px; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: -70vh; height: 60vh;
+           background: #fff; border-top: 1px solid var(--border); border-radius: 1rem 1rem 0 0;
+           box-shadow: 0 -8px 20px rgba(0,0,0,.12); z-index: 1000;
+           display: flex; flex-direction: column; transition: transform .25s ease;
+           transform: translateY(100%); }
+  .sheet.open { transform: translateY(0); }
+  .sheet-header { display:flex; align-items:center; justify-content:space-between;
+                  padding:.75rem 1rem; border-bottom:1px solid var(--border); font-weight:600; }
+  .sheet .list { padding: .5rem 1rem 1rem; overflow:auto; }
+  .sheet .close { appearance:none; border:1px solid var(--border); background:#fff; border-radius:.5rem; padding:.25rem .6rem; }
+}
+
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title">高雄市道路流量/車速 動態視覺化（HTML 單檔 · 強化 v3）</div>
+    <div class="spacer"></div>
+
+    <label class="btn" title="上傳一到多個 GeoJSON（多月份資料可多選）">
+      上傳 GeoJSON
+      <input id="file-input" type="file" accept=".geojson,application/geo+json,application/json" multiple style="display:none" />
+    </label>
+    <input id="url-input" class="btn" type="url" placeholder="貼上 GeoJSON 連結…" style="min-width:360px;max-width:42vw" title="支援 CORS 的 JSON/GeoJSON 連結">
+    <button id="url-load-btn" class="btn" title="從網址載入 GeoJSON">載入網址</button>
+    <div style="font-size:.8rem;color:#6b7280;margin-left:.5rem">範例連結（複製→貼上）：<span id="url-sample" style="user-select:all">https://raw.githubusercontent.com/thomaschang98206/source/refs/heads/main/segments_with_traffic.geojson</span></div>
+
+
+    <button id="demo-btn" class="btn" title="載入內建範例資料">範例資料</button>
+
+    <select id="dataset-select" class="btn" title="選擇資料集（月份）" style="display:none"></select>
+
+    <button id="pause-btn" class="btn" title="暫停/播放動畫">暫停</button>
+  </header>
+
+  <div class="controls">
+    <div class="field" id="period-chips">
+      <button data-period="am" class="chip active">早上</button>
+      <button data-period="pm" class="chip">下午</button>
+      <button data-period="off" class="chip">其他</button>
+    </div>
+
+    <div class="field">
+      <label>速度倍率</label>
+      <input id="speed-range" type="range" min="0.2" max="3" step="0.1" value="0.7" />
+      <span id="speed-val">0.7×</span>
+    </div>
+
+    <div class="field">
+      <label>密度倍率</label>
+      <input id="density-range" type="range" min="0.2" max="3" step="0.1" value="1" />
+      <span id="density-val">1.0×</span>
+    </div>
+
+    <div class="field">
+      <label>粒子大小</label>
+      <input id="size-range" type="range" min="1" max="5" step="0.1" value="2.2" />
+      <span id="size-val">2.2px</span>
+    </div>
+
+    <div class="field">
+      <label class="chk"><input type="checkbox" id="impute-checkbox" /> 自動推估</label>
+    </div>
+  </div>
+
+  <div class="page">
+    <aside class="panel">
+      <h3>速度 Top</h3>
+      <div id="list-speed" class="list"></div>
+    </aside>
+
+    <div class="map-wrap">
+      <div id="map"></div>
+      <canvas id="particle-canvas"></canvas>
+      <div class="hint" id="hint"><div>
+        <div style="font-weight:600; margin-bottom:.25rem;">尚未載入資料</div>
+        <div class="muted">支援兩種資料結構：
+          <br>（A）每時段各有速度/流量欄位（例：speed_am/volume_am…）
+          <br>（B）有「時段」欄位（例：時段=上午尖峰/下午尖峰/離峰）+ 通用欄位（例：平均速率、流量）。
+        </div>
+      </div></div>
+      <div class="legend">
+        <span>速度</span>
+        <div class="grad" title="由左至右：慢→快（藍→紅→橘→黃）"></div>
+        <span class="cap" id="min-speed-label">&lt; min</span><span>→</span><span class="cap" id="max-speed-label">&gt; max</span>
+      </div>
+      
+      <button class="fab" id="fab-speed">速度 Top</button>
+      <button class="fab right" id="fab-volume">流量 Top</button>
+      <div class="sheet" id="sheet-speed">
+        <div class="sheet-header">速度 Top <button class="close" data-close="#sheet-speed">關閉</button></div>
+        <div id="sheet-speed-list" class="list"></div>
+      </div>
+      <div class="sheet" id="sheet-volume">
+        <div class="sheet-header">流量 Top <button class="close" data-close="#sheet-volume">關閉</button></div>
+        <div id="sheet-volume-list" class="list"></div>
+      </div>
+<div class="legend-major">
+        <span class="major-chip"><span class="major-line"></span>主要道路</span>
+      </div>
+    </div>
+
+    <aside class="panel right">
+      <h3>流量 Top</h3>
+      <div id="list-volume" class="list"></div>
+    </aside>
+  </div>
+
+  <footer style="border-top:1px solid var(--border); color:var(--muted); padding:.5rem 1rem; font-size:.75rem;">Made for 高雄市路網視覺化 · 多月份切換 · 動態水滴（速度=顏色與速度、密度=流量） · 地標/道路標示 · 雙向資訊/自動推估 · 純 HTML/Leaflet</footer>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+
+    // Mobile helpers
+    function setAppHeight(){
+      const vh = window.innerHeight * 0.01;
+      document.documentElement.style.setProperty('--vh', `${vh}px`);
+      const page = document.querySelector('.page');
+      if(page){
+        const h = window.innerHeight;
+        const head = document.querySelector('header')?.offsetHeight || 0;
+        const controls = document.querySelector('.controls')?.offsetHeight || 0;
+        const foot = document.querySelector('footer')?.offsetHeight || 0;
+        const target = Math.max(300, h - head - controls - foot);
+        page.style.height = target + 'px';
+      }
+    }
+    window.addEventListener('resize', setAppHeight);
+    window.addEventListener('orientationchange', setAppHeight);
+    setAppHeight();
+
+    const fabSpeed = document.getElementById('fab-speed');
+    const fabVolume = document.getElementById('fab-volume');
+    const sheetSpeed = document.getElementById('sheet-speed');
+    const sheetVolume = document.getElementById('sheet-volume');
+    function openSheet(el){ el && el.classList.add('open'); }
+    function closeSheet(el){ el && el.classList.remove('open'); }
+    fabSpeed && fabSpeed.addEventListener('click', ()=>openSheet(sheetSpeed));
+    fabVolume && fabVolume.addEventListener('click', ()=>openSheet(sheetVolume));
+    document.addEventListener('click', (e)=>{
+      const btn=e.target.closest('.sheet .close');
+      if(btn){ const sel=btn.getAttribute('data-close'); const el=document.querySelector(sel); closeSheet(el); }
+    });
+
+    // Mirror top lists into sheets whenever lists rebuild
+    const __renderListOrig = (window.renderList||function(){});
+    // ---- Config ----
+    const DEFAULT_CENTER=[22.6273,120.3014];
+    const DEFAULTS={baseSpeedPx:100,minDensity:0.08,maxDensity:1.2,particleRadius:2.2,trailAlpha:0,maxParticlesPerPath:800,minParticlesWhenHasData:1};
+    const PERIOD_ALIASES={am:["上午尖峰","早上","AM","morning","am","上午","早"],pm:["下午尖峰","下午","PM","afternoon","pm","晚上","晚"],off:["離峰","非尖峰","平峰","off","其他","non-peak"]};
+    const DIR_ALIASES={forward:["順","正","east","e","向東","往東","東","north","n","向北","往北","北","→","↑"], reverse:["逆","反","west","w","向西","往西","西","south","s","向南","往南","南","←","↓"]};
+    const MAJOR_ROAD_KEYWORDS=["中正","中山","博愛","中華","成功","民族","建國","七賢","自由","光復"];
+
+    // ---- Speed color: slow→fast = blue → red → orange → yellow
+    const COLOR_STOPS = [
+      {t:0.00, rgb:[29,78,216]},   // 藍（慢）
+      {t:0.40, rgb:[239,68,68]},   // 紅
+      {t:0.75, rgb:[245,158,11]},  // 橘
+      {t:1.00, rgb:[253,224,71]}   // 黃（快）
+    ];
+    function lerp(a,b,t){return a+(b-a)*t;}
+    function lerpRGB(c1,c2,t){const r=Math.round(lerp(c1[0],c2[0],t));const g=Math.round(lerp(c1[1],c2[1],t));const b=Math.round(lerp(c1[2],c2[2],t));return `rgb(${r},${g},${b})`;}
+    function colorByUnit(u){
+      if(u<=COLOR_STOPS[0].t) return `rgb(${COLOR_STOPS[0].rgb.join(",")})`;
+      for(let i=1;i<COLOR_STOPS.length;i++){
+        const a=COLOR_STOPS[i-1], b=COLOR_STOPS[i];
+        if(u<=b.t){const tt=(u-a.t)/(b.t-a.t); return lerpRGB(a.rgb,b.rgb,tt);}
+      }
+      return `rgb(${COLOR_STOPS[COLOR_STOPS.length-1].rgb.join(",")})`;
+    }
+
+    // ---- State ----
+    const datasets=[]; let currentIndex=0, period='am', speedMultiplier=0.7, densityMultiplier=1, particleSize=DEFAULTS.particleRadius, paused=false, autoImpute=false;
+    const fieldMap={am:{speed:null,volume:null},pm:{speed:null,volume:null},off:{speed:null,volume:null},periodField:null,baseSpeed:null,baseVolume:null,directionField:null,roadNameField:null};
+
+    // ---- UI Elements ----
+    const fileInput=document.getElementById('file-input');
+    const urlInput=document.getElementById('url-input');
+    const urlLoadBtn=document.getElementById('url-load-btn');
+    const urlSample=document.getElementById('url-sample');
+
+    function normalizeDriveUrl(u){
+      try{
+        const url=new URL(u);
+        if(url.hostname.includes('drive.google.com')){
+          let id=null;
+          const m=url.pathname.match(/\/file\/d\/([^\/]*)/);
+          if(m&&m[1]) id=m[1];
+          if(url.searchParams.has('id')) id=url.searchParams.get('id');
+          if(id) return `https://drive.google.com/uc?export=download&id=${id}`;
+        }
+      }catch(e){}
+      return u;
+    }
+
+    async function loadFromUrl(u){
+      const src=normalizeDriveUrl(u.trim()); if(!src) return;
+      try{
+        const res=await fetch(src,{mode:'cors'});
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const text=await res.text();
+        const json=JSON.parse(text);
+        if(json && json.type==='FeatureCollection'){
+          datasets.push({name:src.replace(/^https?:\/\//,'').slice(0,40), data:json});
+          updateDatasetSelect(); setDatasetIndex(datasets.length-1);
+        }else{ throw new Error('不是有效的 GeoJSON FeatureCollection'); }
+      }catch(err){
+        alert('無法從此網址載入資料：\n'+u+'\n\n原因：'+err.message+'\n\n' +
+          '提示：網址必須可直接回傳 JSON/GeoJSON，且伺服器需允許跨來源（CORS）。' +
+          '\n若是 Google Drive，請確保為公開分享，且可能仍需改用支援 CORS 的靜態檔網址。');
+      }
+    }
+
+    if(urlLoadBtn){ urlLoadBtn.addEventListener('click', ()=>{ if(urlInput&&urlInput.value) loadFromUrl(urlInput.value); }); }
+    if(urlInput){ urlInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter') urlLoadBtn&&urlLoadBtn.click(); }); }
+    if(urlSample){ urlSample.addEventListener('click', ()=>{ if(urlInput){ urlInput.focus(); document.execCommand&&document.execCommand('selectAll',false,null); }}); }
+
+    const datasetSelect=document.getElementById('dataset-select');
+    const periodChips=document.getElementById('period-chips');
+    const pauseBtn=document.getElementById('pause-btn');
+    const demoBtn=document.getElementById('demo-btn');
+    const imputeCheckbox=document.getElementById('impute-checkbox');
+
+    const speedRange=document.getElementById('speed-range');
+    const densityRange=document.getElementById('density-range');
+    const sizeRange=document.getElementById('size-range');
+    const speedVal=document.getElementById('speed-val');
+    const densityVal=document.getElementById('density-val');
+    const sizeVal=document.getElementById('size-val');
+
+    const listSpeed=document.getElementById('list-speed');
+    const listVolume=document.getElementById('list-volume');
+
+    const hint=document.getElementById('hint');
+    const minSpeedLabel=document.getElementById('min-speed-label');
+    const maxSpeedLabel=document.getElementById('max-speed-label');
+
+    // ---- Map init ----
+    const map=L.map('map',{zoomControl:false}).setView(DEFAULT_CENTER,12);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',{attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> contributors & Carto'}).addTo(map);
+
+    // 地標：高雄車站、新左營車站、海洋流行音樂中心、（移除衛武營）＋新增 高雄巨蛋、苓雅運動園區
+    const LANDMARKS = [
+      {name:'高雄車站', lat:22.6392, lng:120.3020},
+      {name:'新左營車站', lat:22.6877, lng:120.3091},
+      {name:'海洋流行音樂中心', lat:22.6196, lng:120.2869},
+      {name:'高雄巨蛋', lat:22.6658, lng:120.3067},
+      {name:'苓雅運動園區', lat:22.6240, lng:120.3276}
+    ];
+    const landmarkLayer = L.layerGroup().addTo(map);
+    LANDMARKS.forEach(lm=>{
+      const label = lm.nameFull || lm.name;
+      L.circleMarker([lm.lat,lm.lng], {radius:6,color:'#111827',weight:1,fillColor:'#f59e0b',fillOpacity:0.9})
+        .addTo(landmarkLayer)
+        .bindTooltip(label,{permanent:true,direction:'top',offset:[0,-6],className:'lm-tip'});
+    });
+
+    let baseLayer=null;       // visible geojson
+    let hitLayer=null;        // invisible fat hitbox for easy hover
+    let labelLayer=L.layerGroup().addTo(map); // per-segment name labels
+    let hoverPopup=L.popup({closeButton:false,closeOnClick:false,autoPan:false,offset:[0,-8]});
+
+    const canvas=document.getElementById('particle-canvas');
+    let world={paths:[],particles:[], sMin:0, sMax:1};
+    let lastTs=null, rafId=null;
+
+    function current(){return datasets[currentIndex]||null}
+    function toLatLngs(coords){return coords.map(c=>L.latLng(c[1],c[0]))}
+    function computeBounds(fc){try{const b=L.latLngBounds([]);for(const f of (fc.features||[])){const g=f&&f.geometry;if(!g)continue;if(g.type==='LineString')toLatLngs(g.coordinates).forEach(ll=>b.extend(ll));else if(g.type==='MultiLineString')for(const line of g.coordinates)toLatLngs(line).forEach(ll=>b.extend(ll))}return b.isValid()?b:null}catch(e){return null}}
+
+    function includesAlias(v,alias){v=String(v||'').toLowerCase();return alias.some(a=>v.includes(String(a).toLowerCase()))}
+    function isMajorRoadName(name){ if(!name) return false; return MAJOR_ROAD_KEYWORDS.some(k=> String(name).includes(k)); }
+    function guessFieldMapping(keys){
+      keys=Array.isArray(keys)?keys:[];
+      const firstName=keys.find(k=>/(name|road|main|道路|路名|路線|路口)/i.test(k))||null;
+      const periodKey=keys.find(k=>/^(時段|period|time[_-]?slot|timeslot|peak)$/i.test(k))||null;
+      const speedKey=keys.find(k=>/(平均速率|速度|speed|kmh|kph|vel|spd)/i.test(k))||null;
+      const volKey=keys.find(k=>/(流量|volume|count|veh|traffic|cars)/i.test(k))||null;
+      const dirKey=keys.find(k=>/(方向|dir|direction)/i.test(k))||null;
+      const pick=(pT,kT)=>{for(const k of keys){const low=String(k).toLowerCase();if(pT.some(p=>p.test(low))&&kT.some(p=>p.test(low)))return k}return''};
+      const amT=[/(^|_|\b)(am|morning|上午|早|尖峰)/i],
+            pmT=[/(^|_|\b)(pm|afternoon|下午|晚|尖峰)/i],
+            offT=[/(off|non|平峰|離峰|其他)/i],
+            speedT=[/(speed|spd|vel|kmh|kph|速|速率)/i],
+            volT=[/(flow|volume|count|veh|traffic|cars|通行|流量)/i];
+      return { am:{speed:pick(amT,speedT),volume:pick(amT,volT)},
+               pm:{speed:pick(pmT,speedT),volume:pick(pmT,volT)},
+               off:{speed:pick(offT,speedT),volume:pick(offT,volT)},
+               periodField:periodKey,baseSpeed:speedKey,baseVolume:volKey,directionField:dirKey,roadNameField:firstName };
+    }
+    function deriveKeys(){const w={speed:(fieldMap[period]||{}).speed, volume:(fieldMap[period]||{}).volume}; return {speedKey:(w.speed||fieldMap.baseSpeed||''), volKey:(w.volume||fieldMap.baseVolume||'')};}
+    function formatRoad(props){const k=fieldMap.roadNameField; return (k && props && props[k]) ? String(props[k]) : (props && props.MAIN) ? String(props.MAIN) : '（未命名路段）'; }
+    function dirSignFromProps(props){const k=fieldMap.directionField; if(!k) return 0; const v=props&&props[k]; if(v==null) return 0; if(includesAlias(v, DIR_ALIASES.reverse)) return -1; if(includesAlias(v, DIR_ALIASES.forward)) return 1; return 0;}
+    function dirText(props){const k=fieldMap.directionField; return (k && props && props[k]) ? String(props[k]) : ''; }
+
+    function setDatasetIndex(i){
+      currentIndex=i;
+      const cur=current(); if(!cur) return;
+      if(baseLayer){baseLayer.remove(); baseLayer=null}
+      if(hitLayer){hitLayer.remove(); hitLayer=null}
+      labelLayer.clearLayers();
+
+      // visible layer with major-road highlighting
+      baseLayer=L.geoJSON(cur.data,{
+        style:(feat)=>{
+          const name = formatRoad(feat.properties||{});
+          const major = isMajorRoadName(name);
+          return major
+            ? {color:'#111827',weight:2.2,opacity:0.9}
+            : {color:'#9CA3AF',weight:1.2,opacity:0.6};
+        }
+      }).addTo(map);
+
+      // fat, invisible hitbox for easier hover "附近"偵測
+      hitLayer=L.geoJSON(cur.data,{
+        style:()=>({color:'#000000',weight:12,opacity:0}),
+        onEachFeature:(feat,layer)=>{
+          layer.on('mousemove',(e)=>showHover(e.latlng, feat.properties));
+          layer.on('mouseout',()=>map.closePopup(hoverPopup));
+        }
+      }).addTo(map);
+
+      const first=(cur.data.features||[]).find(f=>f.properties&&Object.keys(f.properties).length);
+      const keys=first?Object.keys(first.properties):[];
+      const g=guessFieldMapping(keys);
+      Object.assign(fieldMap,{
+        periodField:fieldMap.periodField||g.periodField,
+        baseSpeed:fieldMap.baseSpeed||g.baseSpeed,
+        baseVolume:fieldMap.baseVolume||g.baseVolume,
+        directionField:fieldMap.directionField||g.directionField,
+        roadNameField:fieldMap.roadNameField||g.roadNameField
+      });
+
+      const b=computeBounds(cur.data); if(b) map.fitBounds(b,{padding:[20,20]});
+      hint.style.display='none';
+      rebuildWorld(); drawFrame(); buildLists(); buildRoadLabels();
+    }
+
+    function updateDatasetSelect(){
+      datasetSelect.innerHTML='';
+      datasets.forEach((d,i)=>{const o=document.createElement('option'); o.value=String(i); o.textContent=d.name; datasetSelect.appendChild(o)});
+      datasetSelect.style.display=datasets.length?'':'none';
+      datasetSelect.value=String(currentIndex);
+    }
+
+    function finite(n){return Number.isFinite(n);}
+    function median(arr){ if(!arr || !arr.length) return NaN; const a=[...arr].sort((x,y)=>x-y); const m=Math.floor(a.length/2); return a.length%2? a[m] : (a[m-1]+a[m])/2; }
+
+    // Build paths & (optional) impute missing values
+    function rebuildWorld(){
+      const cur=current(); if(!cur) return;
+      const {speedKey, volKey}=deriveKeys();
+      const feats=(cur.data.features||[]).filter(f=>f.geometry&&(f.geometry.type==='LineString'||f.geometry.type==='MultiLineString')&&featureMatchesPeriod(f.properties||{}));
+
+      // 1) harvest raw items
+      const items=[], speeds=[], vols=[], byRoad={}, byRoadDir={};
+      for(const f of feats){
+        const g=f.geometry, props=f.properties||{};
+        const name=formatRoad(props);
+        const dirS=dirSignFromProps(props);
+        const spRaw=readValue(props,(fieldMap[period]||{}).speed, fieldMap.baseSpeed);
+        const voRaw=readValue(props,(fieldMap[period]||{}).volume, fieldMap.baseVolume);
+        const push=(coords)=>{
+          items.push({coords,name,dirS,props, spRaw, voRaw});
+          if(finite(spRaw)) speeds.push(spRaw);
+          if(finite(voRaw)) vols.push(voRaw);
+          const kR=name, kRD=name+'|'+dirS;
+          if(!byRoad[kR]) byRoad[kR]={sp:[],vo:[]};
+          if(finite(spRaw)) byRoad[kR].sp.push(spRaw);
+          if(finite(voRaw)) byRoad[kR].vo.push(voRaw);
+          if(!byRoadDir[kRD]) byRoadDir[kRD]={sp:[],vo:[]};
+          if(finite(spRaw)) byRoadDir[kRD].sp.push(spRaw);
+          if(finite(voRaw)) byRoadDir[kRD].vo.push(voRaw);
+        };
+        if(g.type==='LineString') push(g.coordinates); else for(const line of g.coordinates) push(line);
+      }
+
+      // 2) compute medians
+      const gSp=median(speeds), gVo=median(vols);
+      const medRoad={}, medRoadDir={};
+      for(const k in byRoad){ medRoad[k]={sp:median(byRoad[k].sp), vo:median(byRoad[k].vo)} }
+      for(const k in byRoadDir){ medRoadDir[k]={sp:median(byRoadDir[k].sp), vo:median(byRoadDir[k].vo)} }
+
+      // 3) finalize items with imputation if opted-in
+      const finalized=[];
+      for(const it of items){
+        let sp=it.spRaw, vo=it.voRaw;
+        if(autoImpute){
+          if(!finite(sp)){
+            const mrd=medRoadDir[it.name+'|'+it.dirS]; const mr=medRoad[it.name];
+            sp = finite(mrd?.sp) ? mrd.sp : (finite(mr?.sp) ? mr.sp : gSp);
+          }
+          if(!finite(vo)){
+            const mrd=medRoadDir[it.name+'|'+it.dirS]; const mr=medRoad[it.name];
+            vo = finite(mrd?.vo) ? mrd.vo : (finite(mr?.vo) ? mr.vo : gVo);
+          }
+        }
+        finalized.push({coords:it.coords, name:it.name, dirS:it.dirS, props:it.props, speed:sp, volume:vo});
+      }
+
+      // 4) build paths/pixels & global min/max (based on finalized)
+      const fSpeeds=finalized.map(x=>x.speed).filter(finite);
+      const fVolumes=finalized.map(x=>x.volume).filter(finite);
+      const sMin=fSpeeds.length?Math.min(...fSpeeds):0, sMax=fSpeeds.length?Math.max(...fSpeeds):1,
+            vMin=fVolumes.length?Math.min(...fVolumes):0, vMax=fVolumes.length?Math.max(...fVolumes):1;
+
+      minSpeedLabel.textContent = fSpeeds.length? (sMin.toFixed(0)+' km/h') : '—';
+      maxSpeedLabel.textContent = fSpeeds.length? (sMax.toFixed(0)+' km/h') : '—';
+
+      const dpr=window.devicePixelRatio||1, rect=canvas.getBoundingClientRect();
+      canvas.width=Math.max(1,Math.round(rect.width*dpr)); canvas.height=Math.max(1,Math.round(rect.height*dpr));
+      const ctx=canvas.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+
+      const paths=[];
+      for(const it of finalized){
+        const latlngs=toLatLngs(it.coords);
+        const pts=latlngs.map(ll=>map.latLngToContainerPoint(ll));
+        if(pts.length<2) continue;
+        const cum=[0]; let total=0;
+        for(let i=1;i<pts.length;i++){const dx=pts[i].x-pts[i-1].x, dy=pts[i].y-pts[i-1].y; total+=Math.hypot(dx,dy); cum.push(total);}
+        if(total<1) continue;
+        paths.push({ pts, latlngs, cum, total, speed:it.speed, volume:it.volume, dir:it.dirS, props:it.props, sMin, sMax, vMin, vMax, name:it.name });
+      }
+
+      const particles=[];
+      for(const p of paths){
+        const sMaxEff=Math.max(1,p.sMax), vRange=Math.max(1e-6,p.vMax-p.vMin);
+        const volNorm=finite(p.volume)?(p.volume-p.vMin)/vRange:0.2;
+        const densityPer100=(0.05+volNorm*(DEFAULTS.maxDensity-DEFAULTS.minDensity))*densityMultiplier;
+        let count=Math.max(DEFAULTS.minParticlesWhenHasData, Math.round((p.total/100)*densityPer100));
+        if(!finite(p.volume)&&!finite(p.speed)) count=0;
+        if(count>DEFAULTS.maxParticlesPerPath) count=DEFAULTS.maxParticlesPerPath;
+        const spd=finite(p.speed)?p.speed:sMaxEff*0.3;
+        const rel=Math.max(0.05,Math.min(1, spd/sMaxEff));
+        const pxSpeed=DEFAULTS.baseSpeedPx*rel*speedMultiplier*(p.dir===0?1:p.dir);
+        const u = (spd - p.sMin) / Math.max(1e-6, (p.sMax - p.sMin));
+        const color = colorByUnit(Math.max(0, Math.min(1, u)));
+        for(let i=0;i<count;i++){
+          particles.push({ path:p, d:Math.random()*p.total, r:particleSize, speedPx:pxSpeed, color });
+        }
+      }
+      world={paths, particles, sMin, sMax};
+      buildLists();
+    }
+
+    function readValue(props, wideKey, baseKey){const raw=(wideKey && props[wideKey]!=null)?props[wideKey]:(baseKey?props[baseKey]:null); return (typeof raw==='number')? raw : (parseFloat(String(raw))||NaN);}
+    function featureMatchesPeriod(props){const key=fieldMap.periodField; if(!key) return true; const v=props&&props[key]; if(v==null) return false; return includesAlias(v, PERIOD_ALIASES[period]);}
+
+    function drawFrame(){
+      const ctx=canvas.getContext('2d'); if(!ctx)return;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      const parts=world.particles||[];
+      for(let i=0;i<parts.length;i++){
+        const p=parts[i], path=p.path, d=p.d, r=p.r;
+        let j=1; const cum=path.cum;
+        while(j<cum.length && cum[j]<d) j++;
+        const i0=Math.max(0,j-1), i1=Math.min(path.pts.length-1,j);
+        const segLen=(cum[i1]-cum[i0])||1, t=(d-cum[i0])/segLen;
+        const P0=path.pts[i0], P1=path.pts[i1];
+        const x=P0.x+(P1.x-P0.x)*t, y=P0.y+(P1.y-P0.y)*t;
+        const ctxFill=ctx;
+        ctxFill.fillStyle=p.color;
+        ctxFill.beginPath(); ctxFill.arc(x,y,r,0,Math.PI*2); ctxFill.fill();
+      }
+    }
+
+    function animate(ts){
+      if(paused){ lastTs=ts; drawFrame(); }
+      else {
+        const last=(lastTs==null)?ts:lastTs;
+        const dt=(ts-last)/1000; lastTs=ts;
+        const parts=world.particles||[];
+        for(let i=0;i<parts.length;i++){
+          const p=parts[i]; p.d += p.speedPx*dt;
+          const total=p.path.total;
+          if(p.d>total) p.d -= total; if(p.d<0) p.d += total;
+        }
+        drawFrame();
+      }
+      rafId=requestAnimationFrame(animate);
+    }
+
+    function renderList(container, rows, key, unit){
+      container.innerHTML='';
+      const top=rows.slice(0,20);
+      top.forEach(r=>{
+        const row=document.createElement('div');
+        row.className='item';
+        row.innerHTML=`<span class="road" title="${r.name}">${r.name}</span><span class="badge value">${(Number.isFinite(r[key])? r[key].toFixed(0):'—')} ${unit}</span>`;
+        container.appendChild(row);
+      });
+    }
+    function buildLists(){
+      const cur=current(); if(!cur) return;
+      const feats=(cur.data.features||[]).filter(f=>f.geometry && featureMatchesPeriod(f.properties||{}));
+      const rows=[];
+      for(const f of feats){
+        const props=f.properties||{}; const name=formatRoad(props);
+        // find a path with same name (any direction)
+        const pth=(world.paths||[]).find(p=>p.name===name);
+        rows.push({name, speed:pth?.speed, volume:pth?.volume});
+      }
+      rows.sort((a,b)=>(b.speed||-1)-(a.speed||-1));
+      renderList(listSpeed, rows, 'speed','km/h');
+      const sheetSpeedList=document.getElementById('sheet-speed-list'); if(sheetSpeedList){ sheetSpeedList.innerHTML = document.getElementById('list-speed').innerHTML; }
+      const rows2=[...rows].sort((a,b)=>(b.volume||-1)-(a.volume||-1));
+      renderList(listVolume, rows2, 'volume','vph');
+      const sheetVolumeList=document.getElementById('sheet-volume-list'); if(sheetVolumeList){ sheetVolumeList.innerHTML = document.getElementById('list-volume').innerHTML; }
+    }
+
+    // distance from point to polyline in pixels
+    function pointSegDist(px,py,x1,y1,x2,y2){
+      const dx=x2-x1, dy=y2-y1;
+      const len2=dx*dx+dy*dy || 1;
+      let t=((px-x1)*dx + (py-y1)*dy)/len2;
+      t=Math.max(0,Math.min(1,t));
+      const x=x1+t*dx, y=y1+t*dy;
+      const ddx=px-x, ddy=py-y;
+      return Math.hypot(ddx,ddy);
+    }
+    function minDistToPath(pxy, path){
+      let best=Infinity;
+      for(let i=1;i<path.pts.length;i++){
+        const a=path.pts[i-1], b=path.pts[i];
+        const d=pointSegDist(pxy.x,pxy.y,a.x,a.y,b.x,b.y);
+        if(d<best) best=d;
+      }
+      return best;
+    }
+
+    function showHover(latlng, props){
+      const name=formatRoad(props);
+      const pxy=map.latLngToContainerPoint(latlng);
+      const cand=(world.paths||[]).filter(p=>p.name===name);
+      if(!cand.length){ map.closePopup(hoverPopup); return; }
+      // pick nearest for each direction group (+1, -1, 0)
+      const groups={pos:null,neg:null,zer:null}, bestD={pos:Infinity,neg:Infinity,zer:Infinity};
+      for(const p of cand){
+        const d=minDistToPath(pxy, p);
+        if(p.dir>0 && d<bestD.pos){ bestD.pos=d; groups.pos=p; }
+        else if(p.dir<0 && d<bestD.neg){ bestD.neg=d; groups.neg=p; }
+        else if(p.dir===0 && d<bestD.zer){ bestD.zer=d; groups.zer=p; }
+      }
+      // build rows
+      const rows=[];
+      if(groups.pos){ rows.push({dir:'→', txt:dirText(groups.pos.props), sp:groups.pos.speed, vo:groups.pos.volume}); }
+      if(groups.neg){ rows.push({dir:'←', txt:dirText(groups.neg.props), sp:groups.neg.speed, vo:groups.neg.volume}); }
+      if(!rows.length && groups.zer){ rows.push({dir:'↔', txt:'雙向', sp:groups.zer.speed, vo:groups.zer.volume}); }
+
+      const makeRow=(r)=>`<tr><td class="dir">${r.dir}${r.txt? ' '+r.txt: ''}</td><td>${Number.isFinite(r.sp)? r.sp.toFixed(1):'—'} km/h</td><td>${Number.isFinite(r.vo)? r.vo.toFixed(0):'—'}</td></tr>`;
+      const html=`<div class="hover-card">
+        <div class="name">${name}</div>
+        <table>
+          <tr><th class="dir">方向</th><th>速度</th><th>流量</th></tr>
+          ${rows.map(makeRow).join('')}
+        </table>
+      </div>`;
+      hoverPopup.setLatLng(latlng).setContent(html);
+      if(!hoverPopup.isOpen()) hoverPopup.openOn(map);
+    }
+
+    // --- Per-segment name labels (midpoint markers) ---
+    function buildRoadLabels(){
+      labelLayer.clearLayers();
+      const cur=current(); if(!cur) return;
+      const feats=(cur.data.features||[]).filter(f=>f.geometry&&(f.geometry.type==='LineString'||f.geometry.type==='MultiLineString')&&featureMatchesPeriod(f.properties||{}));
+      for(const f of feats){
+        const g=f.geometry, props=f.properties||{};
+        const name=formatRoad(props);
+        const pushLabel=(coords)=>{
+          const latlngs=toLatLngs(coords);
+          if(latlngs.length<2) return;
+          const total = latlngs.slice(1).reduce((acc,_,i)=> acc + map.distance(latlngs[i], latlngs[i+1]), 0);
+          if(total<=0) return;
+          let target = total/2, acc=0;
+          for(let i=0;i<latlngs.length-1;i++){
+            const seg = map.distance(latlngs[i], latlngs[i+1]);
+            if(acc+seg>=target){
+              const t=(target-acc)/Math.max(seg,1e-6);
+              const lat = latlngs[i].lat + (latlngs[i+1].lat-latlngs[i].lat)*t;
+              const lng = latlngs[i].lng + (latlngs[i+1].lng-latlngs[i].lng)*t;
+              const icon = L.divIcon({className:'road-label', html:name, iconSize:[0,0], iconAnchor:[0,0]});
+              L.marker([lat,lng],{icon}).addTo(labelLayer);
+              break;
+            }
+            acc+=seg;
+          }
+        };
+        if(g.type==='LineString') pushLabel(g.coordinates);
+        else for(const line of g.coordinates) pushLabel(line);
+      }
+    }
+
+    // ---- Events ----
+    fileInput.addEventListener('change', async (e)=>{
+      const files=e.target.files; if(!files||!files.length) return;
+      for(const file of files){
+        try{
+          const text=await file.text();
+          const json=JSON.parse(text);
+          if(json && json.type==='FeatureCollection'){ datasets.push({name:file.name.replace(/\.geojson$/i,''), data:json}); }
+        }catch(err){ console.warn('skip file', file.name, err); }
+      }
+      updateDatasetSelect(); setDatasetIndex(datasets.length-1);
+    });
+    datasetSelect.addEventListener('change',(e)=> setDatasetIndex(parseInt(e.target.value,10)||0));
+    periodChips.addEventListener('click',(e)=>{
+      const btn=e.target.closest('button[data-period]'); if(!btn) return;
+      period=btn.dataset.period;
+      Array.from(periodChips.querySelectorAll('.chip')).forEach(el=>el.classList.toggle('active', el===btn));
+      rebuildWorld(); drawFrame(); buildRoadLabels();
+    });
+    pauseBtn.addEventListener('click',()=>{ paused=!paused; pauseBtn.textContent=paused?'播放':'暫停'; });
+    speedRange.addEventListener('input',()=>{ speedMultiplier=parseFloat(speedRange.value); speedVal.textContent=speedMultiplier.toFixed(1)+'×'; });
+    densityRange.addEventListener('input',()=>{ densityMultiplier=parseFloat(densityRange.value); densityVal.textContent=densityMultiplier.toFixed(1)+'×'; rebuildWorld(); });
+    sizeRange.addEventListener('input',()=>{ particleSize=parseFloat(sizeRange.value); sizeVal.textContent=particleSize.toFixed(1)+'px'; rebuildWorld(); });
+    imputeCheckbox.addEventListener('change',()=>{ autoImpute=imputeCheckbox.checked; rebuildWorld(); drawFrame(); buildLists(); });
+
+    map.on('move zoom resize', ()=>{ rebuildWorld(); drawFrame(); });
+
+    // Demo 資料（含雙向 & 時段，含路名；其中建國路只有單向，測試「雙向不足→顯示單向/或雙向平均」）
+    demoBtn.addEventListener('click', ()=>{
+      const demo={ type:'FeatureCollection', features:[
+        { type:'Feature', properties:{ 時段:'上午尖峰', 平均速率:55, 流量:320, 道路:'中正路', 方向:'向東' }, geometry:{ type:'LineString', coordinates:[[120.300,22.628],[120.310,22.630],[120.320,22.632]] }},
+        { type:'Feature', properties:{ 時段:'上午尖峰', 平均速率:28, 流量:410, 道路:'中正路', 方向:'向西' }, geometry:{ type:'LineString', coordinates:[[120.320,22.632],[120.310,22.630],[120.300,22.628]] }},
+        { type:'Feature', properties:{ 時段:'下午尖峰', 平均速率:null, 流量:null, 道路:'博愛路', 方向:'向南' }, geometry:{ type:'LineString', coordinates:[[120.315,22.675],[120.315,22.665],[120.315,22.655]] }},
+        { type:'Feature', properties:{ 時段:'下午尖峰', 平均速率:44, 流量:360, 道路:'博愛路', 方向:'向北' }, geometry:{ type:'LineString', coordinates:[[120.315,22.655],[120.315,22.665],[120.315,22.675]] }},
+        { type:'Feature', properties:{ 時段:'離峰',   平均速率:60, 流量:150, 道路:'七賢路', 方向:'向南' }, geometry:{ type:'LineString', coordinates:[[120.295,22.642],[120.293,22.635],[120.290,22.628]] }},
+        { type:'Feature', properties:{ 時段:'下午尖峰', 平均速率:30, 流量:500, 道路:'建國路' }, geometry:{ type:'LineString', coordinates:[[120.290,22.640],[120.292,22.648],[120.295,22.655]] }}
+      ]};
+      datasets.push({ name:'demo_'+new Date().toISOString().slice(0,10), data:demo });
+      datasetSelect.style.display=''; setDatasetIndex(datasets.length-1);
+      Object.assign(fieldMap,{ periodField:'時段', baseSpeed:'平均速率', baseVolume:'流量', directionField:'方向', roadNameField:'道路' });
+    });
+
+    // Start
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
